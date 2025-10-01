@@ -93,7 +93,7 @@ Options:
 
 ## 相关资源
 
-- [Codex CLI 文档](https://docs.openai.com/)（示例链接，请替换为真实地址）
+- [Codex CLI 文档](https://developers.openai.com/codex/cli/)
 - [Ollama 本地模型服务](https://ollama.ai/)：启用 `--oss` 时的依赖环境
 
 > 提示：首次使用前，请确保已通过 `codex login` 完成授权，并在受信任的环境中慎用危险选项。
