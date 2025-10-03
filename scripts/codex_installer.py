@@ -29,6 +29,20 @@ class InstallerError(RuntimeError):
     """Raised when the installation fails."""
 
 
+def _is_within_directory(base_directory: Path, target_path: Path) -> bool:
+    """Return True if target_path resides within base_directory after resolution.
+
+    Prevents writing files outside of the intended extraction directory when
+    unpacking archives that could contain unsafe paths (e.g., "../" entries
+    or absolute paths). This mitigates path traversal (Zip Slip/Tar Slip).
+    """
+    try:
+        target_path.resolve().relative_to(base_directory.resolve())
+        return True
+    except Exception:
+        return False
+
+
 def parse_args(argv: Iterable[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Install the Codex CLI into a custom directory and optionally launch it."
@@ -105,10 +119,24 @@ def download_package(url: str, workdir: Path) -> Path:
 def extract_package(archive: Path, install_dir: Path, binary_name: str) -> Path:
     print(f"Extracting {archive} ...")
     if archive.suffixes[-2:] == [".tar", ".gz"] or archive.suffix == ".tgz":
-        with tarfile.open(archive) as tar:
+        # Use safe extraction to avoid path traversal vulnerabilities
+        with tarfile.open(archive, mode="r:*") as tar:
+            for member in tar.getmembers():
+                member_path = install_dir / member.name
+                if not _is_within_directory(install_dir, member_path):
+                    raise InstallerError(
+                        f"Archive contains unsafe path outside install dir: {member.name}"
+                    )
             tar.extractall(path=install_dir)
     elif archive.suffix == ".zip":
+        # Use safe extraction to avoid path traversal vulnerabilities
         with zipfile.ZipFile(archive) as zipf:
+            for info in zipf.infolist():
+                member_path = install_dir / info.filename
+                if not _is_within_directory(install_dir, member_path):
+                    raise InstallerError(
+                        f"Archive contains unsafe path outside install dir: {info.filename}"
+                    )
             zipf.extractall(path=install_dir)
     else:
         raise InstallerError(f"Unsupported archive format: {archive}")
@@ -131,13 +159,25 @@ def extract_package(archive: Path, install_dir: Path, binary_name: str) -> Path:
 
 
 def create_launcher(binary_path: Path, install_dir: Path) -> Path:
+    # Compute a path to the binary relative to the install directory so the
+    # launcher works even if the binary is nested in a subdirectory.
+    try:
+        relative_binary_path = binary_path.resolve().relative_to(install_dir.resolve())
+    except Exception as exc:
+        raise InstallerError(
+            f"Binary path {binary_path} is not within install directory {install_dir}"
+        ) from exc
+
     launcher = install_dir / "codex-launcher.sh"
     with launcher.open("w", encoding="utf-8") as fh:
         fh.write("#!/usr/bin/env bash\n")
         fh.write("set -euo pipefail\n")
-        fh.write("SCRIPT_DIR=\"$(cd \"$(dirname '${BASH_SOURCE[0]}')\" && pwd)\"\n")
+        # Use double quotes so BASH_SOURCE expands correctly
+        fh.write("SCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\n")
         fh.write("export PATH=\"$SCRIPT_DIR:$PATH\"\n")
-        fh.write("exec \"$SCRIPT_DIR/" + binary_path.name + "\" login \"$@\"\n")
+        fh.write(
+            "exec \"$SCRIPT_DIR/" + relative_binary_path.as_posix() + "\" login \"$@\"\n"
+        )
     launcher.chmod(launcher.stat().st_mode | stat.S_IEXEC)
     return launcher
 
