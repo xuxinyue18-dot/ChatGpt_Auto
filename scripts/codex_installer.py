@@ -175,18 +175,23 @@ def create_launcher(binary_path: Path, install_dir: Path) -> Path:
         # Use double quotes so BASH_SOURCE expands correctly
         fh.write("SCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\n")
         fh.write("export PATH=\"$SCRIPT_DIR:$PATH\"\n")
-        fh.write(
-            "exec \"$SCRIPT_DIR/" + relative_binary_path.as_posix() + "\" login \"$@\"\n"
-        )
+        fh.write("exec \"$SCRIPT_DIR/" + relative_binary_path.as_posix() + "\" \"$@\"\n")
     launcher.chmod(launcher.stat().st_mode | stat.S_IEXEC)
     return launcher
 
 
-def append_profile_snippet(install_dir: Path) -> Path:
+def append_profile_snippet(install_dir: Path, binary_path: Path) -> Path:
     snippet = install_dir / "codex-path.sh"
+    try:
+        relative_binary_path = binary_path.resolve().relative_to(install_dir.resolve())
+        binary_dir = (install_dir / relative_binary_path.parent).resolve()
+    except Exception as exc:
+        raise InstallerError(
+            f"Binary path {binary_path} is not within install directory {install_dir}"
+        ) from exc
     with snippet.open("w", encoding="utf-8") as fh:
         fh.write("# Source this file to add Codex CLI to your PATH\n")
-        fh.write(f"export PATH=\"{install_dir}:$PATH\"\n")
+        fh.write(f"export PATH=\"{binary_dir}:$PATH\"\n")
     return snippet
 
 
@@ -210,7 +215,7 @@ def main(argv: Iterable[str]) -> int:
     binary_path.chmod(binary_path.stat().st_mode | stat.S_IEXEC)
 
     launcher = create_launcher(binary_path, install_dir)
-    profile_snippet = append_profile_snippet(install_dir)
+    profile_snippet = append_profile_snippet(install_dir, binary_path)
 
     print(f"Codex CLI installed successfully from channel '{args.channel}'.")
     print(f"Binary location: {binary_path}")
