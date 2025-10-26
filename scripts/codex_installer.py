@@ -15,13 +15,15 @@ from pathlib import Path
 from typing import Dict, Iterable, Tuple
 from urllib.request import urlretrieve
 
-# Mapping of (system, architecture) to download URLs.
+# Mapping of (system, architecture) to download URL templates. The `{channel}`
+# placeholder is replaced with the requested release channel at runtime (e.g.
+# "latest", "stable", "nightly").
 DEFAULT_URLS: Dict[Tuple[str, str], str] = {
-    ("Linux", "x86_64"): "https://download.openai.com/codex/cli/latest/codex-cli-linux-x64.tar.gz",
-    ("Linux", "aarch64"): "https://download.openai.com/codex/cli/latest/codex-cli-linux-arm64.tar.gz",
-    ("Darwin", "x86_64"): "https://download.openai.com/codex/cli/latest/codex-cli-macos-x64.zip",
-    ("Darwin", "arm64"): "https://download.openai.com/codex/cli/latest/codex-cli-macos-arm64.zip",
-    ("Windows", "AMD64"): "https://download.openai.com/codex/cli/latest/codex-cli-windows-x64.zip",
+    ("Linux", "x86_64"): "https://download.openai.com/codex/cli/{channel}/codex-cli-linux-x64.tar.gz",
+    ("Linux", "aarch64"): "https://download.openai.com/codex/cli/{channel}/codex-cli-linux-arm64.tar.gz",
+    ("Darwin", "x86_64"): "https://download.openai.com/codex/cli/{channel}/codex-cli-macos-x64.zip",
+    ("Darwin", "arm64"): "https://download.openai.com/codex/cli/{channel}/codex-cli-macos-arm64.zip",
+    ("Windows", "AMD64"): "https://download.openai.com/codex/cli/{channel}/codex-cli-windows-x64.zip",
 }
 
 
@@ -75,7 +77,7 @@ def parse_args(argv: Iterable[str]) -> argparse.Namespace:
     parser.add_argument(
         "--channel",
         default="latest",
-        help="Logical release channel identifier used only for logging.",
+        help="Release channel to download (e.g. latest, stable, nightly).",
     )
     return parser.parse_args(argv)
 
@@ -114,6 +116,22 @@ def download_package(url: str, workdir: Path) -> Path:
     urlretrieve(url, filename)
     print(f"Downloaded to {filename}")
     return filename
+
+
+def resolve_download_url(
+    channel: str, system: str, machine: str, override: str | None
+) -> str | None:
+    """Return the download URL for the provided platform/channel."""
+
+    if override:
+        return override
+
+    template = DEFAULT_URLS.get((system, machine))
+    if not template:
+        return None
+
+    channel_value = channel or "latest"
+    return template.format(channel=channel_value)
 
 
 def extract_package(archive: Path, install_dir: Path, binary_name: str) -> Path:
@@ -200,7 +218,7 @@ def main(argv: Iterable[str]) -> int:
     install_dir = args.install_dir.expanduser().resolve()
 
     system, machine = detect_platform()
-    download_url = args.download_url or DEFAULT_URLS.get((system, machine))
+    download_url = resolve_download_url(args.channel, system, machine, args.download_url)
     if not download_url:
         raise InstallerError(
             "Unsupported platform. Please provide --download-url pointing to a Codex CLI package."
